@@ -865,19 +865,9 @@ class TShirtDesigner extends HTMLElement {
     drawCanvas() {
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         
-        // Draw T-shirt background
+        // Draw T-shirt background with proper color masking
         if (this.tshirtImg && this.tshirtImg.complete) {
-            // Apply color overlay
-            this.ctx.save();
-            this.ctx.globalCompositeOperation = 'source-over';
-            this.ctx.drawImage(this.tshirtImg, 0, 0, this.canvas.width, this.canvas.height);
-            
-            if (this.tshirtColor !== '#ffffff') {
-                this.ctx.globalCompositeOperation = 'multiply';
-                this.ctx.fillStyle = this.tshirtColor;
-                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-            }
-            this.ctx.restore();
+            this.drawTShirtWithColor();
         } else {
             // Fallback rectangle
             this.ctx.fillStyle = this.tshirtColor;
@@ -893,6 +883,42 @@ class TShirtDesigner extends HTMLElement {
         if (this.selectedElement) {
             this.drawSelectionBorder(this.selectedElement);
         }
+    }
+    
+    drawTShirtWithColor() {
+        this.ctx.save();
+        
+        // First, draw the original image
+        this.ctx.drawImage(this.tshirtImg, 0, 0, this.canvas.width, this.canvas.height);
+        
+        // Only apply color if it's not white
+        if (this.tshirtColor !== '#ffffff') {
+            // Create a temporary canvas to work with the mask
+            const tempCanvas = document.createElement('canvas');
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCanvas.width = this.canvas.width;
+            tempCanvas.height = this.canvas.height;
+            
+            // Draw the original image to temp canvas
+            tempCtx.drawImage(this.tshirtImg, 0, 0, this.canvas.width, this.canvas.height);
+            
+            // Get image data to create a proper mask
+            const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+            const data = imageData.data;
+            
+            // Create color overlay only on non-transparent pixels
+            tempCtx.globalCompositeOperation = 'source-over';
+            tempCtx.fillStyle = this.tshirtColor;
+            tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+            tempCtx.globalCompositeOperation = 'destination-in';
+            tempCtx.drawImage(this.tshirtImg, 0, 0, this.canvas.width, this.canvas.height);
+            
+            // Apply the colored overlay using multiply blend mode
+            this.ctx.globalCompositeOperation = 'multiply';
+            this.ctx.drawImage(tempCanvas, 0, 0);
+        }
+        
+        this.ctx.restore();
     }
     
     drawElement(element) {
@@ -952,7 +978,9 @@ class TShirtDesigner extends HTMLElement {
         this.ctx.textAlign = 'center';
         this.ctx.textBaseline = 'middle';
         
-        element.width = element.size;
+        // Update element dimensions based on actual size
+        const metrics = this.ctx.measureText(element.content);
+        element.width = Math.max(element.size, metrics.width);
         element.height = element.size;
         
         this.ctx.fillText(element.content, element.x, element.y);
@@ -970,6 +998,11 @@ class TShirtDesigner extends HTMLElement {
         this.ctx.font = `${element.size}px Arial`;
         this.ctx.textAlign = 'center';
         this.ctx.textBaseline = 'middle';
+        
+        // Update element dimensions
+        const metrics = this.ctx.measureText(element.content);
+        element.width = Math.max(element.size, metrics.width);
+        element.height = element.size;
         
         this.ctx.fillText(element.content, element.x, element.y);
     }
@@ -995,8 +1028,8 @@ class TShirtDesigner extends HTMLElement {
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
         
-        // Find clicked element
-        const clickedElement = this.designElements.find(element => {
+        // Find clicked element (check in reverse order to get top element)
+        const clickedElement = [...this.designElements].reverse().find(element => {
             return x >= element.x - element.width/2 - 10 &&
                    x <= element.x + element.width/2 + 10 &&
                    y >= element.y - element.height/2 - 10 &&
@@ -1005,7 +1038,68 @@ class TShirtDesigner extends HTMLElement {
         
         this.selectedElement = clickedElement;
         this.updateElementList();
+        this.populateControlsForSelectedElement();
         this.drawCanvas();
+    }
+    
+    populateControlsForSelectedElement() {
+        const shadow = this.shadowRoot;
+        
+        if (!this.selectedElement) {
+            // Clear controls when nothing is selected
+            shadow.getElementById('textInput').value = '';
+            this.resetStyleButtons();
+            return;
+        }
+        
+        if (this.selectedElement.type === 'text') {
+            // Populate text controls
+            shadow.getElementById('textInput').value = this.selectedElement.content;
+            shadow.getElementById('fontSize').value = this.selectedElement.fontSize;
+            shadow.getElementById('fontSizeValue').textContent = this.selectedElement.fontSize;
+            shadow.getElementById('fontFamily').value = this.selectedElement.fontFamily;
+            shadow.getElementById('textColor').value = this.selectedElement.color;
+            
+            // Update style buttons
+            this.updateStyleButton('boldBtn', this.selectedElement.bold);
+            this.updateStyleButton('italicBtn', this.selectedElement.italic);
+            this.updateStyleButton('underlineBtn', this.selectedElement.underline);
+            
+            // Switch to text tab for easier editing
+            this.switchTab('text');
+        } else if (this.selectedElement.type === 'icon') {
+            // Populate icon controls
+            shadow.getElementById('iconSize').value = this.selectedElement.size;
+            shadow.getElementById('iconSizeValue').textContent = this.selectedElement.size;
+            shadow.getElementById('iconColor').value = this.selectedElement.color;
+            
+            // Switch to icons tab
+            this.switchTab('icons');
+        } else if (this.selectedElement.type === 'emoji') {
+            // Populate icon controls for emoji (they use same size controls)
+            shadow.getElementById('iconSize').value = this.selectedElement.size;
+            shadow.getElementById('iconSizeValue').textContent = this.selectedElement.size;
+            
+            // Switch to images tab
+            this.switchTab('images');
+        }
+    }
+    
+    updateStyleButton(buttonId, isActive) {
+        const btn = this.shadowRoot.getElementById(buttonId);
+        if (isActive) {
+            btn.style.background = 'var(--primary-color)';
+            btn.style.color = 'white';
+        } else {
+            btn.style.background = 'var(--light-color)';
+            btn.style.color = 'var(--dark-color)';
+        }
+    }
+    
+    resetStyleButtons() {
+        ['boldBtn', 'italicBtn', 'underlineBtn'].forEach(buttonId => {
+            this.updateStyleButton(buttonId, false);
+        });
     }
     
     handleMouseDown(e) {
@@ -1047,7 +1141,7 @@ class TShirtDesigner extends HTMLElement {
         
         if (this.selectedElement.type === 'text') {
             const textContent = shadow.getElementById('textInput').value;
-            if (textContent) {
+            if (textContent !== this.selectedElement.content) {
                 this.selectedElement.content = textContent;
             }
             this.selectedElement.fontSize = parseInt(shadow.getElementById('fontSize').value);
@@ -1056,8 +1150,11 @@ class TShirtDesigner extends HTMLElement {
         } else if (this.selectedElement.type === 'icon') {
             this.selectedElement.size = parseInt(shadow.getElementById('iconSize').value);
             this.selectedElement.color = shadow.getElementById('iconColor').value;
+        } else if (this.selectedElement.type === 'emoji') {
+            this.selectedElement.size = parseInt(shadow.getElementById('iconSize').value);
         }
         
+        this.updateElementList();
         this.drawCanvas();
     }
     
@@ -1169,18 +1266,9 @@ class TShirtDesigner extends HTMLElement {
         downloadCanvas.height = this.canvas.height * scale;
         downloadCtx.scale(scale, scale);
         
-        // Draw the full t-shirt with design
+        // Draw the full t-shirt with design using improved color method
         if (this.tshirtImg && this.tshirtImg.complete) {
-            downloadCtx.save();
-            downloadCtx.globalCompositeOperation = 'source-over';
-            downloadCtx.drawImage(this.tshirtImg, 0, 0, this.canvas.width, this.canvas.height);
-            
-            if (this.tshirtColor !== '#ffffff') {
-                downloadCtx.globalCompositeOperation = 'multiply';
-                downloadCtx.fillStyle = this.tshirtColor;
-                downloadCtx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-            }
-            downloadCtx.restore();
+            this.drawTShirtWithColorOnContext(downloadCtx);
         } else {
             downloadCtx.fillStyle = this.tshirtColor;
             downloadCtx.fillRect(100, 100, 400, 500);
@@ -1193,6 +1281,38 @@ class TShirtDesigner extends HTMLElement {
         
         // Download the image
         this.downloadCanvasAsImage(downloadCanvas, 'tshirt-design-full.png');
+    }
+    
+    drawTShirtWithColorOnContext(ctx) {
+        ctx.save();
+        
+        // First, draw the original image
+        ctx.drawImage(this.tshirtImg, 0, 0, this.canvas.width, this.canvas.height);
+        
+        // Only apply color if it's not white
+        if (this.tshirtColor !== '#ffffff') {
+            // Create a temporary canvas to work with the mask
+            const tempCanvas = document.createElement('canvas');
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCanvas.width = this.canvas.width;
+            tempCanvas.height = this.canvas.height;
+            
+            // Draw the original image to temp canvas
+            tempCtx.drawImage(this.tshirtImg, 0, 0, this.canvas.width, this.canvas.height);
+            
+            // Create color overlay only on non-transparent pixels
+            tempCtx.globalCompositeOperation = 'source-over';
+            tempCtx.fillStyle = this.tshirtColor;
+            tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+            tempCtx.globalCompositeOperation = 'destination-in';
+            tempCtx.drawImage(this.tshirtImg, 0, 0, this.canvas.width, this.canvas.height);
+            
+            // Apply the colored overlay using multiply blend mode
+            ctx.globalCompositeOperation = 'multiply';
+            ctx.drawImage(tempCanvas, 0, 0);
+        }
+        
+        ctx.restore();
     }
     
     downloadDesignOnly() {
