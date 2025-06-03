@@ -8,6 +8,8 @@ class TShirtDesigner extends HTMLElement {
         this.selectedElement = null;
         this.tshirtColor = '#ffffff';
         this.isDrawing = false;
+        this.isResizing = false;
+        this.resizeHandle = null;
         this.lastX = 0;
         this.lastY = 0;
         
@@ -402,6 +404,28 @@ class TShirtDesigner extends HTMLElement {
                     background: var(--secondary-color);
                 }
                 
+                .selection-info {
+                    position: fixed;
+                    top: 20px;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    background: rgba(102, 126, 234, 0.9);
+                    color: white;
+                    padding: 10px 20px;
+                    border-radius: 20px;
+                    font-size: 14px;
+                    font-weight: 600;
+                    z-index: 1000;
+                    backdrop-filter: blur(10px);
+                    opacity: 0;
+                    transition: opacity 0.3s ease;
+                    pointer-events: none;
+                }
+                
+                .selection-info.show {
+                    opacity: 1;
+                }
+                
                 @media (max-width: 768px) {
                     .designer-container {
                         flex-direction: column;
@@ -421,6 +445,7 @@ class TShirtDesigner extends HTMLElement {
             </style>
             
             <div class="designer-container">
+                <div class="selection-info" id="selectionInfo">Element selected - Edit in the sidebar</div>
                 <div class="sidebar">
                     <div class="tab-container">
                         <button class="tab active" data-tab="tshirt">T-Shirt</button>
@@ -691,6 +716,9 @@ class TShirtDesigner extends HTMLElement {
         this.canvas.addEventListener('mouseup', () => this.handleMouseUp());
         this.canvas.addEventListener('click', (e) => this.handleCanvasClick(e));
         
+        // Add hover effect to show clickable elements
+        this.canvas.addEventListener('mousemove', (e) => this.handleCanvasHover(e));
+        
         // Download buttons
         shadow.getElementById('downloadFullBtn').addEventListener('click', () => this.downloadFull());
         shadow.getElementById('downloadDesignBtn').addEventListener('click', () => this.downloadDesignOnly());
@@ -888,34 +916,20 @@ class TShirtDesigner extends HTMLElement {
     drawTShirtWithColor() {
         this.ctx.save();
         
-        // First, draw the original image
+        // Draw the original T-shirt image first
+        this.ctx.globalCompositeOperation = 'source-over';
         this.ctx.drawImage(this.tshirtImg, 0, 0, this.canvas.width, this.canvas.height);
         
         // Only apply color if it's not white
         if (this.tshirtColor !== '#ffffff') {
-            // Create a temporary canvas to work with the mask
-            const tempCanvas = document.createElement('canvas');
-            const tempCtx = tempCanvas.getContext('2d');
-            tempCanvas.width = this.canvas.width;
-            tempCanvas.height = this.canvas.height;
+            // Use source-atop to only color existing pixels (the t-shirt)
+            this.ctx.globalCompositeOperation = 'source-atop';
+            this.ctx.fillStyle = this.tshirtColor;
+            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
             
-            // Draw the original image to temp canvas
-            tempCtx.drawImage(this.tshirtImg, 0, 0, this.canvas.width, this.canvas.height);
-            
-            // Get image data to create a proper mask
-            const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
-            const data = imageData.data;
-            
-            // Create color overlay only on non-transparent pixels
-            tempCtx.globalCompositeOperation = 'source-over';
-            tempCtx.fillStyle = this.tshirtColor;
-            tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
-            tempCtx.globalCompositeOperation = 'destination-in';
-            tempCtx.drawImage(this.tshirtImg, 0, 0, this.canvas.width, this.canvas.height);
-            
-            // Apply the colored overlay using multiply blend mode
+            // Blend the color with the original image
             this.ctx.globalCompositeOperation = 'multiply';
-            this.ctx.drawImage(tempCanvas, 0, 0);
+            this.ctx.drawImage(this.tshirtImg, 0, 0, this.canvas.width, this.canvas.height);
         }
         
         this.ctx.restore();
@@ -1013,14 +1027,49 @@ class TShirtDesigner extends HTMLElement {
         this.ctx.setLineDash([5, 5]);
         
         const padding = 10;
-        this.ctx.strokeRect(
-            element.x - element.width/2 - padding,
-            element.y - element.height/2 - padding,
-            element.width + padding * 2,
-            element.height + padding * 2
-        );
+        const left = element.x - element.width/2 - padding;
+        const top = element.y - element.height/2 - padding;
+        const width = element.width + padding * 2;
+        const height = element.height + padding * 2;
         
+        this.ctx.strokeRect(left, top, width, height);
         this.ctx.setLineDash([]);
+        
+        // Draw resize handles for images
+        if (element.type === 'image') {
+            this.drawResizeHandles(element);
+        }
+    }
+    
+    drawResizeHandles(element) {
+        this.ctx.fillStyle = '#007bff';
+        this.ctx.strokeStyle = '#ffffff';
+        this.ctx.lineWidth = 2;
+        
+        const handleSize = 8;
+        const padding = 10;
+        const left = element.x - element.width/2 - padding;
+        const top = element.y - element.height/2 - padding;
+        const width = element.width + padding * 2;
+        const height = element.height + padding * 2;
+        
+        // Corner handles
+        const handles = [
+            { x: left, y: top, type: 'nw' },
+            { x: left + width, y: top, type: 'ne' },
+            { x: left, y: top + height, type: 'sw' },
+            { x: left + width, y: top + height, type: 'se' },
+            // Side handles
+            { x: left + width/2, y: top, type: 'n' },
+            { x: left + width/2, y: top + height, type: 's' },
+            { x: left, y: top + height/2, type: 'w' },
+            { x: left + width, y: top + height/2, type: 'e' }
+        ];
+        
+        handles.forEach(handle => {
+            this.ctx.fillRect(handle.x - handleSize/2, handle.y - handleSize/2, handleSize, handleSize);
+            this.ctx.strokeRect(handle.x - handleSize/2, handle.y - handleSize/2, handleSize, handleSize);
+        });
     }
     
     handleCanvasClick(e) {
@@ -1040,6 +1089,100 @@ class TShirtDesigner extends HTMLElement {
         this.updateElementList();
         this.populateControlsForSelectedElement();
         this.drawCanvas();
+        
+        // Show selection feedback
+        this.showSelectionInfo(clickedElement);
+    }
+    
+    handleCanvasHover(e) {
+        if (this.isDrawing) return; // Don't change cursor while dragging
+        
+        const rect = this.canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        
+        // Check if hovering over any element
+        const hoveredElement = [...this.designElements].reverse().find(element => {
+            return x >= element.x - element.width/2 - 10 &&
+                   x <= element.x + element.width/2 + 10 &&
+                   y >= element.y - element.height/2 - 10 &&
+                   y <= element.y + element.height/2 + 10;
+        });
+        
+        // Change cursor based on hover state
+        if (hoveredElement) {
+            this.canvas.style.cursor = 'pointer';
+        } else {
+            this.canvas.style.cursor = 'crosshair';
+        }
+    }
+    
+    showSelectionInfo(element) {
+        const selectionInfo = this.shadowRoot.getElementById('selectionInfo');
+        
+        if (element) {
+            let message = '';
+            switch (element.type) {
+                case 'text': {
+                    message = 'Text selected - Edit content and style in Text tab';
+                    break;
+                }
+                case 'icon': {
+                    message = 'Icon selected - Adjust size and color in Icons tab';
+                    break;
+                }
+                case 'emoji': {
+                    message = 'Emoji selected - Adjust size in Images tab';
+                    break;
+                }
+                case 'image': {
+                    message = 'Image selected - Drag to move';
+                    break;
+                }
+            }
+            selectionInfo.textContent = message;
+            selectionInfo.classList.add('show');
+            
+            // Hide after 3 seconds
+            setTimeout(() => {
+                selectionInfo.classList.remove('show');
+            }, 3000);
+        } else {
+            selectionInfo.classList.remove('show');
+        }
+    }
+        const selectionInfo = this.shadowRoot.getElementById('selectionInfo');
+        
+        if (element) {
+            let message = '';
+            switch (element.type) {
+                case 'text': {
+                    message = 'Text selected - Edit content and style in Text tab';
+                    break;
+                }
+                case 'icon': {
+                    message = 'Icon selected - Adjust size and color in Icons tab';
+                    break;
+                }
+                case 'emoji': {
+                    message = 'Emoji selected - Adjust size in Images tab';
+                    break;
+                }
+                case 'image': {
+                    message = 'Image selected - Drag to move';
+                    break;
+                }
+            }
+            selectionInfo.textContent = message;
+            selectionInfo.classList.add('show');
+            
+            // Hide after 3 seconds
+            setTimeout(() => {
+                selectionInfo.classList.remove('show');
+            }, 3000);
+        } else {
+            selectionInfo.classList.remove('show');
+        }
     }
     
     populateControlsForSelectedElement() {
@@ -1103,12 +1246,66 @@ class TShirtDesigner extends HTMLElement {
     }
     
     handleMouseDown(e) {
-        if (this.selectedElement) {
-            this.isDrawing = true;
-            const rect = this.canvas.getBoundingClientRect();
-            this.lastX = e.clientX - rect.left;
-            this.lastY = e.clientY - rect.top;
+        const rect = this.canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        
+        this.lastX = x;
+        this.lastY = y;
+        
+        // Check if clicking on a resize handle first
+        if (this.selectedElement && this.selectedElement.type === 'image') {
+            const handle = this.getResizeHandle(x, y, this.selectedElement);
+            if (handle) {
+                this.isResizing = true;
+                this.resizeHandle = handle;
+                return;
+            }
         }
+        
+        // Otherwise, check for element selection/dragging
+        if (this.selectedElement) {
+            const elementBounds = this.getElementBounds(this.selectedElement);
+            if (x >= elementBounds.left && x <= elementBounds.right &&
+                y >= elementBounds.top && y <= elementBounds.bottom) {
+                this.isDrawing = true;
+            }
+        }
+    }
+    
+    getResizeHandle(x, y, element) {
+        const handleSize = 8;
+        const padding = 10;
+        const left = element.x - element.width/2 - padding;
+        const top = element.y - element.height/2 - padding;
+        const width = element.width + padding * 2;
+        const height = element.height + padding * 2;
+        
+        const handles = [
+            { x: left, y: top, type: 'nw' },
+            { x: left + width, y: top, type: 'ne' },
+            { x: left, y: top + height, type: 'sw' },
+            { x: left + width, y: top + height, type: 'se' },
+            { x: left + width/2, y: top, type: 'n' },
+            { x: left + width/2, y: top + height, type: 's' },
+            { x: left, y: top + height/2, type: 'w' },
+            { x: left + width, y: top + height/2, type: 'e' }
+        ];
+        
+        return handles.find(handle => 
+            x >= handle.x - handleSize/2 && x <= handle.x + handleSize/2 &&
+            y >= handle.y - handleSize/2 && y <= handle.y + handleSize/2
+        );
+    }
+    
+    getElementBounds(element) {
+        const padding = 10;
+        return {
+            left: element.x - element.width/2 - padding,
+            right: element.x + element.width/2 + padding,
+            top: element.y - element.height/2 - padding,
+            bottom: element.y + element.height/2 + padding
+        };
     }
     
     handleMouseMove(e) {
